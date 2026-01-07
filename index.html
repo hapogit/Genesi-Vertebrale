@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Genesi Vertebrale Organica | System V.2</title>
+    <!-- Font Sci-Fi -->
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #020202;
+            font-family: 'Rajdhani', sans-serif;
+            color: #ccffff;
+            user-select: none;
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            outline: none;
+            cursor: grab;
+        }
+        canvas:active {
+            cursor: grabbing;
+        }
+
+        /* --- UI LAYER --- */
+        .ui-layer {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+            background: radial-gradient(circle at center, transparent 50%, rgba(0,0,0,0.6) 100%); /* Vignette */
+        }
+
+        /* Scan lines overlay */
+        .scan-lines {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            background-size: 100% 3px, 3px 100%;
+            pointer-events: none;
+            opacity: 0.4;
+        }
+
+        /* Barra laterale */
+        .hud-right {
+            position: absolute;
+            right: 40px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .progress-container {
+            height: 300px;
+            width: 2px;
+            background: rgba(0, 221, 238, 0.15);
+            position: relative;
+        }
+
+        .progress-bar {
+            position: absolute;
+            top: 0;
+            left: -1px;
+            width: 4px;
+            height: 0%;
+            background: #00ddee;
+            box-shadow: 0 0 10px #00ddee;
+            transition: height 0.1s;
+        }
+
+        .hud-label {
+            writing-mode: vertical-rl;
+            font-size: 10px;
+            letter-spacing: 2px;
+            opacity: 0.7;
+            text-transform: uppercase;
+        }
+
+        /* Testo contestuale */
+        .status-panel {
+            position: absolute;
+            bottom: 40px;
+            left: 40px;
+            border-left: 2px solid #00ddee;
+            padding-left: 15px;
+        }
+
+        .status-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: white;
+            margin-bottom: 5px;
+            text-shadow: 0 0 10px rgba(0, 221, 238, 0.3);
+        }
+
+        .status-text {
+            font-size: 12px;
+            font-family: 'Rajdhani', monospace;
+            color: #00ddee;
+            letter-spacing: 1px;
+        }
+
+        .scroll-hint {
+            position: absolute;
+            bottom: 40px;
+            right: 50%;
+            transform: translateX(50%);
+            font-size: 10px;
+            opacity: 0.5;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.3; }
+            50% { opacity: 0.8; }
+            100% { opacity: 0.3; }
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div class="ui-layer">
+        <div class="scan-lines"></div>
+        
+        <div class="hud-right">
+            <span class="hud-label">Cervical</span>
+            <div class="progress-container">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+            <span class="hud-label">Lumbar</span>
+        </div>
+
+        <div class="status-panel">
+            <div class="status-title">GENESI VERTEBRALE</div>
+            <div class="status-text" id="statusText">INITIALIZING SEQUENCE...</div>
+        </div>
+
+        <div class="scroll-hint">SCROLL / DRAG TO SCAN</div>
+    </div>
+
+    <script>
+        // --- CONFIGURAZIONE SCENA ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x020202, 0.035); 
+        scene.background = new THREE.Color(0x020202);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping; 
+        renderer.outputEncoding = THREE.sRGBEncoding;
+        document.body.appendChild(renderer.domElement);
+
+        // --- ILLUMINAZIONE ---
+        const ambientLight = new THREE.AmbientLight(0x222222); 
+        scene.add(ambientLight);
+
+        // Luce principale (Sole clinico)
+        const mainLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        mainLight.position.set(5, 10, 5);
+        mainLight.castShadow = true;
+        mainLight.shadow.mapSize.width = 1024;
+        mainLight.shadow.mapSize.height = 1024;
+        mainLight.shadow.bias = -0.0001; 
+        scene.add(mainLight);
+
+        // Luce Scanner (Dinamica)
+        const scannerGroup = new THREE.Group();
+        scene.add(scannerGroup);
+
+        const scannerLight = new THREE.PointLight(0x00ddee, 3, 15); 
+        scannerGroup.add(scannerLight);
+
+        // Piano Laser Scanner (Effetto visivo)
+        const planeGeo = new THREE.PlaneGeometry(15, 15);
+        const planeMat = new THREE.MeshBasicMaterial({
+            color: 0x00ddee,
+            transparent: true,
+            opacity: 0.05,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        const scannerPlane = new THREE.Mesh(planeGeo, planeMat);
+        scannerPlane.rotation.x = Math.PI / 2;
+        scannerGroup.add(scannerPlane);
+
+        // Luce di contorno (Rim light blu scuro per profondità)
+        const rimLight = new THREE.DirectionalLight(0x002288, 1.5);
+        rimLight.position.set(-10, 0, -5);
+        scene.add(rimLight);
+
+
+        // --- MATERIALI CONDIVISI (Ottimizzazione) ---
+        // Osso più realistico (leggermente beige, non bianco puro)
+        const boneMat = new THREE.MeshPhysicalMaterial({
+            color: 0xe8e6d1, 
+            metalness: 0.1,
+            roughness: 0.6, 
+            clearcoat: 0.1,
+            clearcoatRoughness: 0.4
+        });
+
+        // Ologramma migliorato
+        const holoMat = new THREE.MeshBasicMaterial({ 
+            color: 0x00ddee, 
+            wireframe: true, 
+            transparent: true, 
+            opacity: 0.15,
+            blending: THREE.AdditiveBlending 
+        });
+
+        // --- GEOMETRIE CONDIVISE (Ottimizzazione) ---
+        const geoLib = {
+            body: new THREE.CylinderGeometry(1.5, 1.5, 0.9, 32),
+            pedicle: new THREE.SphereGeometry(0.45, 16, 16),
+            transverse: new THREE.SphereGeometry(1, 16, 16),
+            spine: new THREE.SphereGeometry(1, 16, 16)
+        };
+
+
+        // --- FUNZIONE CREAZIONE VERTEBRA ---
+        function createVertebraParts() {
+            const group = new THREE.Group();
+            const parts = [];
+
+            // Helper per creare mesh riutilizzando geometrie
+            const createPart = (geo, scale, pos, rot, startOffset) => {
+                const mesh = new THREE.Mesh(geo, boneMat);
+                mesh.scale.copy(scale);
+                mesh.castShadow = true; 
+                mesh.receiveShadow = true;
+                
+                // Dati per animazione
+                mesh.userData = {
+                    targetPos: pos.clone(),
+                    targetRot: rot ? rot.clone() : new THREE.Euler(0,0,0),
+                    startOffset: startOffset.clone(),
+                    originalScale: scale.clone()
+                };
+                
+                // Posiziona inizialmente al target
+                mesh.position.copy(pos);
+                if(rot) mesh.rotation.copy(rot);
+
+                mesh.userData.solidMat = boneMat;
+                mesh.userData.holoMat = holoMat;
+                
+                group.add(mesh);
+                parts.push(mesh);
+            };
+
+            // 1. CORPO
+            createPart(
+                geoLib.body, 
+                new THREE.Vector3(1, 1, 0.85), 
+                new THREE.Vector3(0, 0, 0), 
+                null, 
+                new THREE.Vector3(0, 0, -5)
+            );
+
+            // 2. PEDUNCOLI
+            createPart(
+                geoLib.pedicle, 
+                new THREE.Vector3(1, 1, 1.8), 
+                new THREE.Vector3(-0.9, 0.1, 0.9), 
+                new THREE.Euler(0, -0.2, 0), 
+                new THREE.Vector3(-4, 0, 2)
+            );
+            createPart(
+                geoLib.pedicle, 
+                new THREE.Vector3(1, 1, 1.8), 
+                new THREE.Vector3(0.9, 0.1, 0.9), 
+                new THREE.Euler(0, 0.2, 0), 
+                new THREE.Vector3(4, 0, 2)
+            );
+
+            // 3. PROCESSI TRASVERSI
+            createPart(
+                geoLib.transverse, 
+                new THREE.Vector3(1.5, 0.3, 0.4), 
+                new THREE.Vector3(-1.8, 0.1, 0.9), 
+                new THREE.Euler(0, 0, 0.4), 
+                new THREE.Vector3(-6, 2, 0)
+            );
+            createPart(
+                geoLib.transverse, 
+                new THREE.Vector3(1.5, 0.3, 0.4), 
+                new THREE.Vector3(1.8, 0.1, 0.9), 
+                new THREE.Euler(0, 0, -0.4), 
+                new THREE.Vector3(6, 2, 0)
+            );
+
+            // 4. PROCESSO SPINOSO
+            createPart(
+                geoLib.spine, 
+                new THREE.Vector3(0.35, 0.5, 1.6), 
+                new THREE.Vector3(0, -0.4, 2.4), 
+                new THREE.Euler(0.6, 0, 0), 
+                new THREE.Vector3(0, -4, 6)
+            );
+
+            group.userData.parts = parts;
+            return group;
+        }
+
+        // --- SISTEMA PARTICELLARE (Atmosfera) ---
+        const particlesCount = 400;
+        const posArray = new Float32Array(particlesCount * 3);
+        for(let i = 0; i < particlesCount * 3; i++) {
+            posArray[i] = (Math.random() - 0.5) * 40; // Spread spaziale
+        }
+        const particlesGeo = new THREE.BufferGeometry();
+        particlesGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+        const particlesMat = new THREE.PointsMaterial({
+            size: 0.05,
+            color: 0x00ddee,
+            transparent: true,
+            opacity: 0.4,
+            blending: THREE.AdditiveBlending
+        });
+        const particlesMesh = new THREE.Points(particlesGeo, particlesMat);
+        scene.add(particlesMesh);
+
+
+        // --- COSTRUZIONE SPINA DORSALE ---
+        const vertebraeCount = 26; // 7 cervicali, 12 toraciche, 5 lombari + extra
+        const spineGroup = new THREE.Group();
+        const vertebraeArray = [];
+
+        for (let i = 0; i < vertebraeCount; i++) {
+            const v = createVertebraParts();
+            
+            // Posizionamento verticale e curvatura a "S" naturale
+            const yPos = i * -1.6; 
+            v.position.set(0, yPos, 0);
+
+            const t = i / vertebraeCount;
+            // Curva sigmoidea della colonna
+            v.position.z += Math.sin(t * Math.PI * 2) * 2.0; 
+            v.position.x += Math.cos(t * Math.PI * 1) * 0.5; // Leggera asimmetria organica
+            v.rotation.x = Math.cos(t * Math.PI * 2) * 0.2;  
+
+            // Scaling naturale (più grandi in basso - lombari)
+            const naturalScale = 0.8 + (t * 0.4); 
+            v.scale.set(naturalScale, naturalScale, naturalScale);
+
+            spineGroup.add(v);
+            vertebraeArray.push(v);
+        }
+        scene.add(spineGroup);
+
+
+        // --- GESTIONE INPUT (SCROLL & TOUCH) ---
+        let virtualScrollY = 0;
+        let targetScrollY = 0;
+        // Limite scroll aumentato per permettere l'esplorazione completa
+        const maxScroll = vertebraeCount * 130; 
+
+        // Mouse Wheel
+        const onWheel = (e) => {
+            targetScrollY += e.deltaY * 0.5;
+            targetScrollY = Math.max(0, Math.min(targetScrollY, maxScroll));
+            e.preventDefault();
+        };
+        window.addEventListener('wheel', onWheel, { passive: false });
+        
+        // Touch & Drag Logic
+        let isDragging = false;
+        let startY = 0;
+        let lastTouchY = 0;
+
+        // Gestione mouse drag desktop
+        window.addEventListener('mousedown', e => { isDragging = true; startY = e.clientY; document.body.style.cursor = 'grabbing'; });
+        window.addEventListener('mouseup', () => { isDragging = false; document.body.style.cursor = 'default'; });
+        window.addEventListener('mousemove', e => {
+            if(!isDragging) return;
+            const delta = startY - e.clientY;
+            targetScrollY += delta * 1.5;
+            targetScrollY = Math.max(0, Math.min(targetScrollY, maxScroll));
+            startY = e.clientY;
+        });
+
+        // Gestione touch mobile
+        window.addEventListener('touchstart', e => { lastTouchY = e.touches[0].clientY; });
+        window.addEventListener('touchmove', e => {
+            const delta = lastTouchY - e.touches[0].clientY;
+            targetScrollY += delta * 2.0; // Sensibilità aumentata per mobile
+            targetScrollY = Math.max(0, Math.min(targetScrollY, maxScroll));
+            lastTouchY = e.touches[0].clientY;
+            e.preventDefault(); // Evita scroll pagina
+        }, { passive: false });
+
+
+        // --- ANIMATION LOOP ---
+        const clock = new THREE.Clock();
+        const statusEl = document.getElementById('statusText');
+        const progressBar = document.getElementById('progressBar');
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = clock.getElapsedTime();
+
+            // Lerp fluido dello scroll
+            virtualScrollY += (targetScrollY - virtualScrollY) * 0.08; 
+            const progress = virtualScrollY / maxScroll;
+
+            // Update UI
+            progressBar.style.height = (progress * 100) + '%';
+            
+            const scanSpeed = Math.abs(targetScrollY - virtualScrollY);
+            if (scanSpeed > 5) {
+                statusEl.innerText = `DATA STREAM: ${Math.floor(scanSpeed * 10)} MB/s`;
+                statusEl.style.color = '#fff';
+            } else {
+                statusEl.innerText = "SYSTEM: STABLE // MONITORING";
+                statusEl.style.color = '#00ddee';
+            }
+
+            // Movimento Camera (Cinematico)
+            const camTargetY = 4 - (progress * (vertebraeCount * 1.8)); // Offset aggiustato
+            
+            // Spirale della camera
+            const camAngle = progress * Math.PI * 2;
+            const camRad = 22; 
+            
+            camera.position.x = Math.sin(camAngle) * camRad;
+            camera.position.z = Math.cos(camAngle) * camRad;
+            // Lerp sulla Y camera per evitare scatti
+            camera.position.y += (camTargetY - camera.position.y) * 0.1;
+            
+            // Camera guarda leggermente sotto la sua posizione
+            camera.lookAt(0, camera.position.y - 4, 0); 
+
+            // Scanner Light & Plane seguono la camera ma con offset
+            scannerGroup.position.set(0, camera.position.y - 3, 0);
+            
+            // Rotazione lenta scanner per effetto
+            scannerPlane.rotation.z = time * 0.5;
+            particlesMesh.rotation.y = time * 0.05;
+
+
+            // --- LOGICA DI ASSEMBLAGGIO (Il Core) ---
+            const scanPlaneY = scannerGroup.position.y; 
+            const assembleRange = 10; // Raggio di effetto aumentato
+
+            vertebraeArray.forEach((v, index) => {
+                const dist = v.position.y - scanPlaneY;
+                const parts = v.userData.parts;
+
+                // 1. Zona COMPLETATA (Sopra lo scanner)
+                if (dist > 1.5) {
+                    parts.forEach(p => {
+                        if(p.material !== p.userData.solidMat) p.material = p.userData.solidMat;
+                        
+                        // Lerp finale verso posizione target precisa
+                        p.position.lerp(p.userData.targetPos, 0.2);
+                        if(p.userData.targetRot) {
+                            p.rotation.x += (p.userData.targetRot.x - p.rotation.x) * 0.2;
+                            p.rotation.y += (p.userData.targetRot.y - p.rotation.y) * 0.2;
+                            p.rotation.z += (p.userData.targetRot.z - p.rotation.z) * 0.2;
+                        }
+                        p.scale.lerp(p.userData.originalScale, 0.2);
+                    });
+                } 
+                // 2. Zona ASSEMBLAGGIO (Dentro il raggio scanner)
+                else if (dist > -assembleRange && dist <= 1.5) {
+                    // Normalizziamo la distanza da 0 a 1
+                    const t = (dist + assembleRange) / (assembleRange + 1.5);
+                    const smoothT = t * t * (3 - 2 * t); // Ease in-out cubic
+
+                    parts.forEach((p) => {
+                        // Switch materiale a ologramma
+                        p.material = p.userData.holoMat;
+                        p.material.opacity = 0.05 + (smoothT * 0.8);
+                        
+                        // Colore shift da blu a bianco
+                        const hue = 0.5 + (1-smoothT)*0.1; // Blu ciano
+                        p.material.color.setHSL(hue, 1.0, 0.2 + smoothT * 0.8); 
+
+                        // Calcolo Esplosione
+                        const explosionFactor = (1 - smoothT) * 2.5; 
+                        
+                        const currentX = p.userData.targetPos.x + (p.userData.startOffset.x * explosionFactor);
+                        const currentY = p.userData.targetPos.y + (p.userData.startOffset.y * explosionFactor);
+                        const currentZ = p.userData.targetPos.z + (p.userData.startOffset.z * explosionFactor);
+
+                        p.position.set(currentX, currentY, currentZ);
+
+                        // Rotazione caotica che si stabilizza
+                        if(p.userData.targetRot) {
+                            p.rotation.x = p.userData.targetRot.x + (1-smoothT) * Math.sin(time + index);
+                            p.rotation.y = p.userData.targetRot.y + (1-smoothT) * Math.cos(time + index);
+                        }
+
+                        // Scala che cresce dal nulla
+                        const grow = 0.01 + smoothT * 0.99;
+                        p.scale.copy(p.userData.originalScale).multiplyScalar(grow);
+                    });
+
+                } 
+                // 3. Zona INVISIBILE (Sotto lo scanner)
+                else {
+                    parts.forEach(p => {
+                        p.scale.setScalar(0.0001); 
+                    });
+                }
+            });
+
+            renderer.render(scene, camera);
+        }
+
+        // --- RESIZE ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Avvio
+        animate();
+
+    </script>
+</body>
+</html>
